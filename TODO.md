@@ -8,6 +8,7 @@
 - [x] grpc client
 - [x] task runner
 - [x] associate the runner with the grpc service
+- [x] bazel commands
 - [ ] a web interface
 
 ## Future versions

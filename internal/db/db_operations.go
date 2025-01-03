@@ -3,13 +3,10 @@ package db
 import (
 	"database/sql"
 	"fmt"
-	"time"
 
 	"internal/pb"
 
 	_ "github.com/mattn/go-sqlite3"
-	"google.golang.org/protobuf/types/known/durationpb"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type TaskDatabase interface {
@@ -133,31 +130,23 @@ func (database *TaskDatabaseImpl) GetTasks() ([]*pb.Task, error) {
 	// Iterate over the rows
 	var tasks []*pb.Task
 	for rows.Next() {
-		var task pb.Task
-		var createTime time.Time
-		var startTime time.Time
-		var finishTime time.Time
-		var executionTime int64
+		var t task
 		err := rows.Scan(
-			&task.Id,
-			&task.Status,
-			&task.Commandline,
-			&task.ReturnCode,
-			&startTime,
-			&finishTime,
-			&executionTime,
-			&task.WorkingDirectory,
-			&createTime,
-			&task.Output,
+			&t.ID,
+			&t.Status,
+			&t.Commandline,
+			&t.ReturnCode,
+			&t.StartTime,
+			&t.FinishTime,
+			&t.ExecutionTime,
+			&t.WorkingDirectory,
+			&t.CreateTime,
+			&t.Output,
 		)
 		if err != nil {
 			return nil, err
 		}
-		task.StartTime = timestamppb.New(startTime)
-		task.FinishTime = timestamppb.New(finishTime)
-		task.ExecutionTime = durationpb.New(time.Duration(executionTime) * time.Second)
-		task.CreateTime = timestamppb.New(createTime)
-		tasks = append(tasks, &task)
+		tasks = append(tasks, t.ToProto())
 	}
 
 	// Check for errors from iterating over rows
@@ -170,32 +159,24 @@ func (database *TaskDatabaseImpl) GetTasks() ([]*pb.Task, error) {
 
 func (database *TaskDatabaseImpl) GetTask(id int64) (*pb.Task, error) {
 	// Task struct to hold the data
-	var task pb.Task
+	var t task
 
 	// Query the task
-	var startTime time.Time
-	var finishTime time.Time
-	var executionTime int64
-	var createTime time.Time
 	err := database.db.QueryRow(SQL_QUERY_ONE_TASK, id).Scan(
-		&task.Id,
-		&task.Status,
-		&task.Commandline,
-		&task.ReturnCode,
-		&startTime,
-		&finishTime,
-		&executionTime,
-		&task.WorkingDirectory,
-		&createTime,
-		&task.Output)
+		&t.ID,
+		&t.Status,
+		&t.Commandline,
+		&t.ReturnCode,
+		&t.StartTime,
+		&t.FinishTime,
+		&t.ExecutionTime,
+		&t.WorkingDirectory,
+		&t.CreateTime,
+		&t.Output)
 	if err != nil {
 		return nil, err
 	}
-	task.StartTime = timestamppb.New(startTime)
-	task.FinishTime = timestamppb.New(finishTime)
-	task.ExecutionTime = durationpb.New(time.Duration(executionTime) * time.Second)
-	task.CreateTime = timestamppb.New(createTime)
-	return &task, nil
+	return t.ToProto(), nil
 }
 
 func (database *TaskDatabaseImpl) DeleteTask(id int64) error {
@@ -207,16 +188,17 @@ func (database *TaskDatabaseImpl) DeleteTask(id int64) error {
 	return nil
 }
 
-func (database *TaskDatabaseImpl) CreateTask(task *pb.Task) (*pb.Task, error) {
+func (database *TaskDatabaseImpl) CreateTask(pbTask *pb.Task) (*pb.Task, error) {
+	t := TaskFromProto(pbTask)
 	result, err := database.db.Exec(SQL_INSERT_TASK,
-		task.Status,
-		task.Commandline,
-		task.ReturnCode,
-		task.StartTime,
-		task.FinishTime,
-		task.ExecutionTime,
-		task.WorkingDirectory,
-		task.Output,
+		t.Status,
+		t.Commandline,
+		t.ReturnCode,
+		t.StartTime,
+		t.FinishTime,
+		t.ExecutionTime,
+		t.WorkingDirectory,
+		t.Output,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("CreateTask: %v", err)
@@ -227,34 +209,23 @@ func (database *TaskDatabaseImpl) CreateTask(task *pb.Task) (*pb.Task, error) {
 	if err != nil {
 		return nil, fmt.Errorf("CreateTask: get last insert ID: %v", err)
 	}
-	task.Id = taskID
+	t.ID = taskID
 
-	return task, nil
+	return t.ToProto(), nil
 }
 
-func (database *TaskDatabaseImpl) UpdateTask(task *pb.Task) (*pb.Task, error) {
-	var startTime time.Time
-	var finishTime time.Time
-	var executionTime int64
-	if task.StartTime != nil {
-		startTime = task.StartTime.AsTime()
-	}
-	if task.FinishTime != nil {
-		finishTime = task.FinishTime.AsTime()
-	}
-	if task.ExecutionTime != nil {
-		executionTime = int64(task.ExecutionTime.Seconds)
-	}
+func (database *TaskDatabaseImpl) UpdateTask(pbTask *pb.Task) (*pb.Task, error) {
+	t := TaskFromProto(pbTask)
 	result, err := database.db.Exec(SQL_UPDATE_TASK,
-		task.Status,
-		task.Commandline,
-		task.ReturnCode,
-		startTime,
-		finishTime,
-		executionTime,
-		task.WorkingDirectory,
-		task.Output,
-		task.Id,
+		t.Status,
+		t.Commandline,
+		t.ReturnCode,
+		t.StartTime,
+		t.FinishTime,
+		t.ExecutionTime,
+		t.WorkingDirectory,
+		t.Output,
+		t.ID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("UpdateTask: %v", err)
@@ -266,26 +237,25 @@ func (database *TaskDatabaseImpl) UpdateTask(task *pb.Task) (*pb.Task, error) {
 		return nil, fmt.Errorf("UpdateTask: get rows affected: %v", err)
 	}
 	if rowsAffected == 0 {
-		return nil, fmt.Errorf("UpdateTask: no task with ID %d found", task.Id)
+		return nil, fmt.Errorf("UpdateTask: no task with ID %d found", t.ID)
 	}
 
-	return task, nil
+	return t.ToProto(), nil
 }
 
 func (database *TaskDatabaseImpl) GetLatestTask() (*pb.Task, error) {
-	var task pb.Task
-	var createTime time.Time
+	var t task
 	err := database.db.QueryRow(SQL_QUERY_LATEST_TASK, pb.TaskStatus_NEW).Scan(
-		&task.Id,
-		&task.Status,
-		&task.Commandline,
-		&task.ReturnCode,
-		&task.StartTime,
-		&task.FinishTime,
-		&task.ExecutionTime,
-		&task.WorkingDirectory,
-		&createTime,
-		&task.Output,
+		&t.ID,
+		&t.Status,
+		&t.Commandline,
+		&t.ReturnCode,
+		&t.StartTime,
+		&t.FinishTime,
+		&t.ExecutionTime,
+		&t.WorkingDirectory,
+		&t.CreateTime,
+		&t.Output,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -294,6 +264,5 @@ func (database *TaskDatabaseImpl) GetLatestTask() (*pb.Task, error) {
 		return nil, fmt.Errorf("GetLatestTask: %v", err)
 	}
 
-	task.CreateTime = timestamppb.New(createTime)
-	return &task, nil
+	return t.ToProto(), nil
 }

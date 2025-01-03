@@ -17,6 +17,7 @@ type TaskDatabase interface {
 	DeleteTask(id int64) error
 	CreateTask(task *pb.Task) (*pb.Task, error)
 	UpdateTask(task *pb.Task) (*pb.Task, error)
+	GetLatestTask() (*pb.Task, error)
 }
 
 type TaskDatabaseImpl struct {
@@ -174,4 +175,33 @@ func (database *TaskDatabaseImpl) UpdateTask(task *pb.Task) (*pb.Task, error) {
 	}
 
 	return task, nil
+}
+
+func (database *TaskDatabaseImpl) GetLatestTask() (*pb.Task, error) {
+	const SQL_QUERY_LATEST_TASK = `SELECT id, status, commandline, return_code, start_time, finish_time, execution_time, working_directory, create_time 
+	FROM tasks 
+	WHERE status = ? 
+	ORDER BY create_time DESC 
+	LIMIT 1`
+
+	var task pb.Task
+	err := database.db.QueryRow(SQL_QUERY_LATEST_TASK, pb.TaskStatus_NEW).Scan(
+		&task.Id,
+		&task.Status,
+		&task.Commandline,
+		&task.ReturnCode,
+		&task.StartTime,
+		&task.FinishTime,
+		&task.ExecutionTime,
+		&task.WorkingDirectory,
+		&task.CreateTime,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil // No task found
+		}
+		return nil, fmt.Errorf("GetLatestTask: %v", err)
+	}
+
+	return &task, nil
 }

@@ -1,12 +1,13 @@
 package db_test
 
 import (
+	"db"
 	"fmt"
-	"internal/db"
-	"internal/pb"
 	"log"
 	"os"
 	"testing"
+
+	"internal/pb"
 )
 
 const (

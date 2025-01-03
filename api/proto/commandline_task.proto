@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package task;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+
+option go_package = "internal/pb";
+
+service TaskService {
+  rpc ReadTask(ReadTaskRequest) returns (TaskResponse);
+  rpc DeleteTask(DeleteTaskRequest) returns (TaskResponse);
+  rpc ReadTaskList(ReadTaskListRequest) returns (TaskListResponse);
+}
+
+message ReadTaskRequest { int64 id = 1; }
+message DeleteTaskRequest { int64 id = 1; }
+message ReadTaskListRequest { int64 count = 1; }
+message TaskResponse { Task task = 1; }
+message TaskListResponse { repeated Task tasks = 1; }
+
+enum TaskStatus {
+  NEW = 0;
+  RUNNING = 1;
+  FINISHED = 2;
+}
+
+message Task {
+  int64 id = 1;
+  TaskStatus status = 2;
+  int32 return_code = 3;
+  string output = 4;
+  google.protobuf.Timestamp start_time = 5;
+  google.protobuf.Timestamp finish_time = 6;
+  google.protobuf.Duration execution_time = 7;
+  string working_directory = 8;
+  string commandline = 9;
+}

@@ -76,6 +76,25 @@ func showTask(client pb.TaskServiceClient, id int64, onlyOutput, onlyStatus, onl
 	}
 }
 
+func printTask(client pb.TaskServiceClient, id int64) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	req := &pb.ReadTaskRequest{Id: id}
+	res, err := client.ReadTask(ctx, req)
+	if err != nil {
+		log.Fatalf("could not read task: %v", err)
+	}
+
+	outputPath := res.Task.Output
+	content, err := os.ReadFile(outputPath)
+	if err != nil {
+		log.Fatalf("could not read file: %v", err)
+	}
+
+	fmt.Print(string(content))
+}
+
 func main() {
 	conn, err := grpc.Dial(address, grpc.WithInsecure(), grpc.WithBlock())
 	if err != nil {
@@ -88,6 +107,13 @@ func main() {
 	listCmd := flag.NewFlagSet("list", flag.ExitOnError)
 	newCmd := flag.NewFlagSet("new", flag.ExitOnError)
 	showCmd := flag.NewFlagSet("show", flag.ExitOnError)
+	catCmd := flag.NewFlagSet("cat", flag.ExitOnError)
+	flagSets := map[string]*flag.FlagSet{
+		"list": listCmd,
+		"new":  newCmd,
+		"show": showCmd,
+		"cat":  catCmd,
+	}
 
 	listN := listCmd.Int("n", 10, "Number of tasks to list")
 
@@ -97,14 +123,31 @@ func main() {
 	}
 	newWorkingDir := newCmd.String("w", cwd, "Working directory")
 
-	showID := showCmd.Int64("id", -1, "Task ID")
+	showID := showCmd.Int64("i", -1, "Task ID")
 	showOutput := showCmd.Bool("o", false, "Only print output path")
 	showStatus := showCmd.Bool("s", false, "Only print status")
 	showExitCode := showCmd.Bool("e", false, "Only print exit code")
+	flag.Usage = func() {
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage of %s:\n", os.Args[0])
+		fmt.Println("Commands:")
+		fmt.Println("  list -n <number>       List tasks")
+		fmt.Println("  new -w <directory>     Create a new task")
+		fmt.Println("  show -i <task_id>     Show task details")
+		fmt.Println("  cat -i <task_id>      Print the task output")
+		for _, subCmd := range flagSets {
+			subCmd.PrintDefaults()
+		}
+	}
+
+	catId := catCmd.Int64("i", -1, "Task ID")
 
 	if len(os.Args) < 2 {
-		fmt.Println("expected 'list', 'new' or 'show' subcommands")
+		flag.Usage()
 		os.Exit(1)
+	}
+
+	if len(os.Args) < 2 {
+		printHelp(flagSets)
 	}
 
 	switch os.Args[1] {
@@ -122,8 +165,20 @@ func main() {
 	case "show":
 		showCmd.Parse(os.Args[2:])
 		showTask(client, *showID, *showOutput, *showStatus, *showExitCode)
+	case "cat":
+		catCmd.Parse(os.Args[2:])
+		printTask(client, *catId)
 	default:
-		fmt.Println("expected 'list', 'new' or 'show' subcommands")
-		os.Exit(1)
+		printHelp(flagSets)
 	}
+}
+
+func printHelp(flagSets map[string]*flag.FlagSet) {
+	subCmds := make([]string, 0, len(flagSets))
+	for c := range flagSets {
+		subCmds = append(subCmds, fmt.Sprintf("'%s'", c))
+	}
+	fmt.Printf("expected %s subcommands", strings.Join(subCmds, " "))
+	flag.Usage()
+	os.Exit(1)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"internal/db"
 	"internal/pb"
+	"log"
 )
 
 type TaskStatusProxy interface {
@@ -43,6 +44,7 @@ func (s *TaskServiceServer) RemoveListener(listener TaskServiceListener) {
 func (s *TaskServiceServer) ReadTask(ctx context.Context, req *pb.ReadTaskRequest) (*pb.TaskResponse, error) {
 	task, err := s.taskDB.GetTask(req.Id)
 	if err != nil {
+		log.Printf("Readtask: Failed to get task: %v", err)
 		return nil, err
 	}
 	return &pb.TaskResponse{Task: task}, nil
@@ -53,11 +55,13 @@ func (s *TaskServiceServer) DeleteTask(ctx context.Context, req *pb.DeleteTaskRe
 	// Retrieve the task before deleting it
 	task, err := s.taskDB.GetTask(req.Id)
 	if err != nil {
+		log.Printf("DeleteTask: Failed to get task: %v", err)
 		return nil, err
 	}
 
 	err = s.taskDB.DeleteTask(req.Id)
 	if err != nil {
+		log.Printf("DeleteTask: Failed to delete task: %v", err)
 		return nil, err
 	}
 
@@ -74,6 +78,7 @@ func (s *TaskServiceServer) DeleteTask(ctx context.Context, req *pb.DeleteTaskRe
 func (s *TaskServiceServer) ReadTaskList(ctx context.Context, req *pb.ReadTaskListRequest) (*pb.TaskListResponse, error) {
 	tasks, err := s.taskDB.GetTasks()
 	if err != nil {
+		log.Printf("ReadTaskList: Failed to get tasks: %v", err)
 		return nil, err
 	}
 	return &pb.TaskListResponse{Tasks: tasks}, nil
@@ -82,6 +87,7 @@ func (s *TaskServiceServer) ReadTaskList(ctx context.Context, req *pb.ReadTaskLi
 func (s *TaskServiceServer) CreateTask(ctx context.Context, req *pb.CreateTaskRequest) (*pb.TaskResponse, error) {
 	task, err := s.taskDB.CreateTask(req.GetTask())
 	if err != nil {
+		log.Printf("CreateTask: Failed to create task: %v", err)
 		return nil, err
 	}
 

@@ -3,10 +3,13 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"time"
 
 	"internal/pb"
 
 	_ "github.com/mattn/go-sqlite3"
+	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type TaskDatabase interface {
@@ -22,6 +25,12 @@ type TaskDatabase interface {
 
 type TaskDatabaseImpl struct {
 	db *sql.DB
+}
+
+type ErrNoRows struct{}
+
+func (e *ErrNoRows) Error() string {
+	return "no rows found"
 }
 
 func NewTaskDatabase(dbPath string) (TaskDatabase, error) {
@@ -42,25 +51,60 @@ const (
 		status INTEGER,
 		commandline TEXT,
 		return_code INTEGER,
-		start_time TEXT,
-		finish_time TEXT,
+		start_time DATETIME,
+		finish_time DATETIME,
 		execution_time INTEGER,
-		working_directory TEXT
-);`
-	SQL_QUERY_ONE_TASK = `SELECT id, status, commandline, return_code, start_time, finish_time, execution_time, working_directory FROM tasks WHERE id = ?`
-	SQL_QUERY_TASKS    = `SELECT id, status, commandline, return_code, start_time, finish_time, execution_time, working_directory FROM tasks`
-	SQL_UPDATE_TASK    = `UPDATE tasks SET
-        status = ?,
-        commandline = ?,
-        return_code = ?,
-        start_time = ?,
-        finish_time = ?,
-        execution_time = ?,
-        working_directory = ?
-    WHERE id = ?`
+		working_directory TEXT,
+		output TEXT,
+		create_time DATETIME DEFAULT CURRENT_TIMESTAMP
+	);`
+
+	SQL_QUERY_ONE_TASK = `SELECT
+		id,
+		status,
+		commandline,
+		return_code,
+		start_time,
+		finish_time,
+		execution_time,
+		working_directory,
+		create_time,
+		output
+	FROM tasks WHERE id = ?`
+
+	SQL_QUERY_TASKS = `SELECT
+		id,
+		status,
+		commandline,
+		return_code,
+		start_time,
+		finish_time,
+		execution_time,
+		working_directory,
+		create_time,
+		output
+	FROM tasks`
+
+	SQL_UPDATE_TASK = `UPDATE tasks SET
+		status = ?,
+		commandline = ?,
+		return_code = ?,
+		start_time = ?,
+		finish_time = ?,
+		execution_time = ?,
+		working_directory = ?,
+		output = ?
+	WHERE id = ?`
 	SQL_DELETE_TASK = `DELETE FROM tasks WHERE id = ?`
-	SQL_INSERT_TASK = `INSERT INTO tasks (status, commandline, return_code, start_time, finish_time, execution_time, working_directory)
-    VALUES (?, ?, ?, ?, ?, ?, ?)`
+
+	SQL_INSERT_TASK = `INSERT INTO tasks (status, commandline, return_code, start_time, finish_time, execution_time, working_directory, output)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+
+	SQL_QUERY_LATEST_TASK = `SELECT id, status, commandline, return_code, start_time, finish_time, execution_time, working_directory, create_time, output
+	FROM tasks 
+	WHERE status = ? 
+	ORDER BY create_time DESC 
+	LIMIT 1`
 )
 
 func (database *TaskDatabaseImpl) Init() error {
@@ -90,10 +134,29 @@ func (database *TaskDatabaseImpl) GetTasks() ([]*pb.Task, error) {
 	var tasks []*pb.Task
 	for rows.Next() {
 		var task pb.Task
-		err := rows.Scan(&task.Id, &task.Status, &task.Commandline, &task.ReturnCode, &task.StartTime, &task.FinishTime, &task.ExecutionTime, &task.WorkingDirectory)
+		var createTime time.Time
+		var startTime time.Time
+		var finishTime time.Time
+		var executionTime int64
+		err := rows.Scan(
+			&task.Id,
+			&task.Status,
+			&task.Commandline,
+			&task.ReturnCode,
+			&startTime,
+			&finishTime,
+			&executionTime,
+			&task.WorkingDirectory,
+			&createTime,
+			&task.Output,
+		)
 		if err != nil {
 			return nil, err
 		}
+		task.StartTime = timestamppb.New(startTime)
+		task.FinishTime = timestamppb.New(finishTime)
+		task.ExecutionTime = durationpb.New(time.Duration(executionTime) * time.Second)
+		task.CreateTime = timestamppb.New(createTime)
 		tasks = append(tasks, &task)
 	}
 
@@ -110,10 +173,28 @@ func (database *TaskDatabaseImpl) GetTask(id int64) (*pb.Task, error) {
 	var task pb.Task
 
 	// Query the task
-	err := database.db.QueryRow(SQL_QUERY_ONE_TASK, id).Scan(&task.Id, &task.Status, &task.Commandline, &task.ReturnCode, &task.StartTime, &task.FinishTime, &task.ExecutionTime, &task.WorkingDirectory)
+	var startTime time.Time
+	var finishTime time.Time
+	var executionTime int64
+	var createTime time.Time
+	err := database.db.QueryRow(SQL_QUERY_ONE_TASK, id).Scan(
+		&task.Id,
+		&task.Status,
+		&task.Commandline,
+		&task.ReturnCode,
+		&startTime,
+		&finishTime,
+		&executionTime,
+		&task.WorkingDirectory,
+		&createTime,
+		&task.Output)
 	if err != nil {
 		return nil, err
 	}
+	task.StartTime = timestamppb.New(startTime)
+	task.FinishTime = timestamppb.New(finishTime)
+	task.ExecutionTime = durationpb.New(time.Duration(executionTime) * time.Second)
+	task.CreateTime = timestamppb.New(createTime)
 	return &task, nil
 }
 
@@ -135,6 +216,7 @@ func (database *TaskDatabaseImpl) CreateTask(task *pb.Task) (*pb.Task, error) {
 		task.FinishTime,
 		task.ExecutionTime,
 		task.WorkingDirectory,
+		task.Output,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("CreateTask: %v", err)
@@ -151,14 +233,27 @@ func (database *TaskDatabaseImpl) CreateTask(task *pb.Task) (*pb.Task, error) {
 }
 
 func (database *TaskDatabaseImpl) UpdateTask(task *pb.Task) (*pb.Task, error) {
+	var startTime time.Time
+	var finishTime time.Time
+	var executionTime int64
+	if task.StartTime != nil {
+		startTime = task.StartTime.AsTime()
+	}
+	if task.FinishTime != nil {
+		finishTime = task.FinishTime.AsTime()
+	}
+	if task.ExecutionTime != nil {
+		executionTime = int64(task.ExecutionTime.Seconds)
+	}
 	result, err := database.db.Exec(SQL_UPDATE_TASK,
 		task.Status,
 		task.Commandline,
 		task.ReturnCode,
-		task.StartTime,
-		task.FinishTime,
-		task.ExecutionTime,
+		startTime,
+		finishTime,
+		executionTime,
 		task.WorkingDirectory,
+		task.Output,
 		task.Id,
 	)
 	if err != nil {
@@ -178,13 +273,8 @@ func (database *TaskDatabaseImpl) UpdateTask(task *pb.Task) (*pb.Task, error) {
 }
 
 func (database *TaskDatabaseImpl) GetLatestTask() (*pb.Task, error) {
-	const SQL_QUERY_LATEST_TASK = `SELECT id, status, commandline, return_code, start_time, finish_time, execution_time, working_directory, create_time 
-	FROM tasks 
-	WHERE status = ? 
-	ORDER BY create_time DESC 
-	LIMIT 1`
-
 	var task pb.Task
+	var createTime time.Time
 	err := database.db.QueryRow(SQL_QUERY_LATEST_TASK, pb.TaskStatus_NEW).Scan(
 		&task.Id,
 		&task.Status,
@@ -194,14 +284,16 @@ func (database *TaskDatabaseImpl) GetLatestTask() (*pb.Task, error) {
 		&task.FinishTime,
 		&task.ExecutionTime,
 		&task.WorkingDirectory,
-		&task.CreateTime,
+		&createTime,
+		&task.Output,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, nil // No task found
+			return nil, &ErrNoRows{} // No task found
 		}
 		return nil, fmt.Errorf("GetLatestTask: %v", err)
 	}
 
+	task.CreateTime = timestamppb.New(createTime)
 	return &task, nil
 }

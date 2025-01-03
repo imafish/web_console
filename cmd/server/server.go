@@ -31,36 +31,53 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
+	err = taskDB.Init()
+	if err != nil {
+		log.Fatalf("Failed to initialize database: %v", err)
+	}
 	defer taskDB.Uninit()
 
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	runnerService := runner.NewRunnerDaemon(taskDB)
+	// Initialize the runner service
+	runnerDaemon := runner.NewRunnerDaemon(taskDB)
 	go func() {
-		defer runnerService.Close()
+		defer runnerDaemon.Close()
 		defer wg.Done()
-		runnerService.Run()
+		log.Printf("Runner service started")
+		runnerDaemon.Run()
+		log.Printf("Runner service stopped")
 	}()
 
 	// Initialize the gRPC server
 	server := grpc.NewServer()
 	taskService := service.NewTaskServiceServer(taskDB)
 
+	// create a listner to receive task update events
+	taskListener := runner.NewTaskListener(runnerDaemon.IncomingChan)
+	taskService.RegisterListener(taskListener)
+
 	// Register the TaskServiceServer with the gRPC server
 	pb.RegisterTaskServiceServer(server, taskService)
 
-	// Start listening on a port
+	// Start the gRPC server
 	listener, err := net.Listen(protocol, listenAddr)
 	if err != nil {
 		log.Fatalf("Failed to listen: %v", err)
 	}
-	log.Printf("gRPC server is listening on port 50051...")
-
 	go func() {
+		defer func() { runnerDaemon.ExitChan <- true }()
 		defer wg.Done()
+		log.Printf("gRPC server is listening on %s", listenAddr)
 		if err := server.Serve(listener); err != nil {
 			log.Fatalf("Failed to serve: %v", err)
+		}
+	}()
+
+	go func() {
+		for t := range runnerDaemon.TaskChan {
+			log.Printf("Updated: ID: %d, CMD: %s, Status %s\n", t.Id, t.Commandline, t.GetStatus().String())
 		}
 	}()
 

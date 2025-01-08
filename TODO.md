@@ -8,8 +8,10 @@
 - [x] grpc client
 - [x] task runner
 - [x] associate the runner with the grpc service
-- [x] bazel commands
+- [ ] bazel commands
 - [ ] a web interface
+
+how to set up bazel commands for a go grpc project?
 
 ## Future versions
 
